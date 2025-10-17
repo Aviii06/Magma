@@ -1,0 +1,5 @@
+build/*
+macosbuild/*
+.idea/
+cmake-build-debug/*
+cmake-build-release/*
