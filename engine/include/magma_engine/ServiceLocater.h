@@ -16,7 +16,7 @@ namespace Magma
     public:
         virtual ~IService() = default;
 
-        virtual void Cleanup() {}
+        virtual void Cleanup() = 0;
     };
 
     class ServiceLocator
@@ -31,11 +31,11 @@ namespace Magma
 
             if (s_services.find(typeIndex) != s_services.end())
             {
-                Logger::Log(LogLevel::WARNING, "Service already registered, skipping");
+                Logger::Log(LogLevel::WARNING, "{} Service already registered, skipping", typeIndex.name());
                 return;
             }
 
-            Logger::Log(LogLevel::INFO, "Registering service");
+            Logger::Log(LogLevel::INFO, "Registering service: {}", typeIndex.name());
             s_services[typeIndex] = service;
         }
 
@@ -48,11 +48,11 @@ namespace Magma
             auto it = s_services.find(typeIndex);
             if (it == s_services.end())
             {
-                Logger::Log(LogLevel::WARNING, "Service not registered");
+                Logger::Log(LogLevel::WARNING, "{} Service not registered", typeIndex.name());
                 return;
             }
 
-            Logger::Log(LogLevel::INFO, "Unregistering service");
+            Logger::Log(LogLevel::INFO, "Unregistering service: {}", typeIndex.name());
             it->second->Cleanup();
             s_services.erase(it);
         }

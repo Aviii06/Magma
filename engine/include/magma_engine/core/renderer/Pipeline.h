@@ -12,39 +12,31 @@ namespace Magma
 
     class Pipeline
     {
-    public:
-        Pipeline() = default;
-        ~Pipeline();
+    protected:
+        VkDevice m_device = VK_NULL_HANDLE;
+        VkPipeline m_pipeline = VK_NULL_HANDLE;
+        VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
 
-        // Delete copy operations
+        bool CreatePipelineLayout(const PipelineLayoutInfo& layoutInfo);
+
+        Pipeline() = default;
+
+    public:
+        virtual ~Pipeline();
+
         Pipeline(const Pipeline&) = delete;
         Pipeline& operator=(const Pipeline&) = delete;
 
-        // Move operations
         Pipeline(Pipeline&& other) noexcept;
         Pipeline& operator=(Pipeline&& other) noexcept;
-
-        bool CreateGraphicsPipeline(
-            VkDevice device,
-            const PipelineLayoutInfo& layoutInfo,
-            VkShaderModule vertexShader,
-            VkShaderModule fragmentShader,
-            VkFormat colorAttachmentFormat,
-            VkFormat depthAttachmentFormat = VK_FORMAT_UNDEFINED
-        );
-
-        void Destroy();
 
         VkPipeline GetPipeline() const { return m_pipeline; }
         VkPipelineLayout GetLayout() const { return m_pipelineLayout; }
         bool IsValid() const { return m_pipeline != VK_NULL_HANDLE; }
 
-        void Bind(VkCommandBuffer cmd) const;
+        virtual void Bind(VkCommandBuffer cmd) const = 0;
 
-    private:
-        VkDevice m_device = VK_NULL_HANDLE;
-        VkPipeline m_pipeline = VK_NULL_HANDLE;
-        VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
+        virtual void Destroy();
     };
 }
 

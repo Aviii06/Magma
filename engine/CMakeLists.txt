@@ -9,6 +9,8 @@ set(SOURCES
         src/core/renderer/VkInitializers.cpp
         src/core/renderer/VkUtils.cpp
         src/core/renderer/Pipeline.cpp
+        src/core/renderer/GraphicsPipeline.cpp
+        src/core/renderer/ComputePipeline.cpp
         src/core/renderer/ShaderModule.cpp
         src/core/renderer/DescriptorManager.cpp
 )

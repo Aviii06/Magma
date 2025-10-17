@@ -23,6 +23,9 @@ void Magma::Engine::Run()
 		ServiceLocator::Get<Window>()->Update();
 		ServiceLocator::Get<Renderer>()->Draw();
 	}
+
+	// Gracefully Exit
+	Cleanup();
 }
 
 void Magma::Engine::Cleanup()

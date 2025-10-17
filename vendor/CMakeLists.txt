@@ -5,7 +5,7 @@ find_package(Vulkan REQUIRED)
 
 #add_subdirectory(imgui)
 add_subdirectory(vk-bootstrap)
-#add_subdirectory(vma)
+add_subdirectory(vma)
 #add_subdirectory(tinyobjloader)
 
 add_library(vendor INTERFACE)
@@ -18,6 +18,6 @@ target_link_libraries(vendor
         Vulkan::Vulkan
 #        imgui
         vk-bootstrap::vk-bootstrap
-#        vma
+        VulkanMemoryAllocator
 #        tinyobjloader
 )
