@@ -31,6 +31,19 @@ VkCommandBufferBeginInfo Magma::vkinit::command_buffer_begin_info(VkCommandBuffe
 	return info;
 }
 
+
+VkCommandBufferAllocateInfo Magma::vkinit::command_buffer_allocate_info(VkCommandPool pool, uint32_t count)
+{
+	VkCommandBufferAllocateInfo info = {};
+	info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+	info.pNext = nullptr;
+	info.commandPool = pool;
+	info.commandBufferCount = count;
+	info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+
+	return info;
+}
+
 VkImageSubresourceRange Magma::vkinit::image_subresource_range(VkImageAspectFlags aspectMask)
 {
 	VkImageSubresourceRange subImage {};

@@ -2,6 +2,7 @@
 #include <types/Containers.h>
 #include <maths/Vec.h>
 
+
 #include <magma_engine/ServiceLocater.h>
 #include <magma_engine/core/renderer/Image.h>
 #include <magma_engine/core/renderer/DeletionQueue.h>
@@ -24,6 +25,13 @@ namespace Magma
         DeletionQueue m_deletionQueue;
     };
 
+    struct ImmRenderData
+    {
+        VkFence immFence;
+        VkCommandBuffer immCommandBuffer;
+        VkCommandPool immCommandPool;
+    };
+
     class Renderer : public IService
     {
     public:
@@ -31,6 +39,29 @@ namespace Magma
         void Draw();
         void Cleanup() override;
         FrameData& get_current_frame() { return m_frames[m_frameNumber % FRAME_OVERLAP]; };
+
+        void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
+
+        // New methods for editor integration
+        void BeginFrame();
+        void RenderScene();
+        void CopyToSwapchain();
+        void BeginUIRenderPass();
+        void EndFrame();
+        void Present();
+        VkCommandBuffer GetCurrentCommandBuffer() { return get_current_frame().m_mainCommandBuffer; }
+        uint32_t GetCurrentSwapchainIndex() const { return m_currentSwapchainImageIndex; }
+
+        // ImGui / Editor Integration
+        VkDevice GetDevice() const { return m_device; }
+        VkInstance GetInstance() const { return m_instance; }
+        VkPhysicalDevice GetPhysicalDevice() const { return m_physicalDevice; }
+        VkQueue GetGraphicsQueue() const { return m_graphicsQueue; }
+        uint32_t GetGraphicsQueueFamily() const { return m_graphicsQueueFamily; }
+        VkFormat GetSwapchainImageFormat() const { return m_swapchainImageFormat; }
+        AllocatedImage& GetDrawImage() { return m_drawImage; }
+        VkExtent2D GetDrawExtent() const { return m_drawExtent; }
+        VkSampler GetDrawImageSampler() const { return m_drawImageSampler; }
 
     private:
         void init_vulkan();
@@ -40,6 +71,8 @@ namespace Magma
         void init_descriptors();
         void init_pipelines();
         void init_background_pipelines();
+
+        void init_imgui();
 
         void draw_background(VkCommandBuffer cmd);
         void draw_geometry(VkCommandBuffer cmd);
@@ -71,6 +104,8 @@ namespace Magma
 
         DeletionQueue m_mainDeletionQueue;
 
+        ImmRenderData m_immRenderData;
+
         // Pipeline and shader resources
         DescriptorManager m_descriptorManager;
 
@@ -84,10 +119,14 @@ namespace Magma
         // Draw image descriptors
         VkDescriptorSet m_drawImageDescriptors;
         VkDescriptorSetLayout m_drawImageDescriptorLayout;
+        VkSampler m_drawImageSampler;
 
         // Dynamic rendering function pointers (for MoltenVK compatibility)
         PFN_vkCmdBeginRenderingKHR m_vkCmdBeginRenderingKHR = nullptr;
         PFN_vkCmdEndRenderingKHR m_vkCmdEndRenderingKHR = nullptr;
         PFN_vkCmdBlitImage2KHR m_vkCmdBlitImage2 = nullptr;
+
+        // Current frame state
+        uint32_t m_currentSwapchainImageIndex = 0;
     };
 }

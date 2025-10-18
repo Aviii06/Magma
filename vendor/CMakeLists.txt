@@ -3,7 +3,7 @@ add_subdirectory(glm)
 
 find_package(Vulkan REQUIRED)
 
-#add_subdirectory(imgui)
+add_subdirectory(imgui)
 add_subdirectory(vk-bootstrap)
 add_subdirectory(vma)
 #add_subdirectory(tinyobjloader)
@@ -16,7 +16,7 @@ target_link_libraries(vendor
         glm
         Vulkan::Headers
         Vulkan::Vulkan
-#        imgui
+        imgui
         vk-bootstrap::vk-bootstrap
         VulkanMemoryAllocator
 #        tinyobjloader

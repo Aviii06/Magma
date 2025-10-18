@@ -29,18 +29,20 @@ void Magma::Renderer::Cleanup()
 {
 	vkDeviceWaitIdle(m_device);
 
-	// Cleanup pipelines and shaders
+	// TODO: Add these to the main deletion queue.
 	m_trianglePipeline.Destroy();
+	m_gradientPipeline.Destroy();
 	m_triangleVertShader.Destroy();
 	m_triangleFragShader.Destroy();
+	m_gradientCompShader.Destroy();
 
-	// Cleanup sync structures
+	// Cleanup sync structures and per-frame resources
 	for (int i = 0; i < FRAME_OVERLAP; i++)
 	{
+		// TODO: Add these to the frames deletion queue.
 		vkDestroyFence(m_device, m_frames[i].m_renderFence, nullptr);
 		vkDestroySemaphore(m_device, m_frames[i].m_swapchainSemaphore, nullptr);
 		vkDestroySemaphore(m_device, m_frames[i].m_renderSemaphore, nullptr);
-		vkDestroyCommandPool(m_device, m_frames[i].m_commandPool, nullptr);
 
 		m_frames[i].m_deletionQueue.flush();
 	}
@@ -274,15 +276,25 @@ void Magma::Renderer::init_commands()
 		VK_CHECK(vkCreateCommandPool(m_device, &commandPoolInfo, nullptr, &m_frames[i].m_commandPool));
 
 		// allocate the default command buffer that we will use for rendering
-		VkCommandBufferAllocateInfo cmdAllocInfo = {};
-		cmdAllocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-		cmdAllocInfo.pNext = nullptr;
-		cmdAllocInfo.commandPool = m_frames[i].m_commandPool;
-		cmdAllocInfo.commandBufferCount = 1;
-		cmdAllocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-
+		VkCommandBufferAllocateInfo cmdAllocInfo = vkinit::command_buffer_allocate_info(m_frames[i].m_commandPool, 1);
 		VK_CHECK(vkAllocateCommandBuffers(m_device, &cmdAllocInfo, &m_frames[i].m_mainCommandBuffer));
+
+		m_mainDeletionQueue.push_function([=]()
+		{
+			vkDestroyCommandPool(m_device, m_frames[i].m_commandPool, nullptr);
+		});
 	}
+
+	// Creating immediate sync and render objects
+	VK_CHECK(vkCreateCommandPool(m_device, &commandPoolInfo, nullptr, &m_immRenderData.immCommandPool));
+
+	VkCommandBufferAllocateInfo cmdAllocInfo = vkinit::command_buffer_allocate_info(m_immRenderData.immCommandPool, 1);
+	VK_CHECK(vkAllocateCommandBuffers(m_device, &cmdAllocInfo, &m_immRenderData.immCommandBuffer));
+
+	m_mainDeletionQueue.push_function([this]
+	{
+		vkDestroyCommandPool(m_device, m_immRenderData.immCommandPool, nullptr);
+	});
 }
 
 void Magma::Renderer::init_sync_structures()
@@ -297,11 +309,42 @@ void Magma::Renderer::init_sync_structures()
 		VK_CHECK(vkCreateSemaphore(m_device, &semaphoreCreateInfo, nullptr, &m_frames[i].m_swapchainSemaphore));
 		VK_CHECK(vkCreateSemaphore(m_device, &semaphoreCreateInfo, nullptr, &m_frames[i].m_renderSemaphore));
 	}
+
+	VK_CHECK(vkCreateFence(m_device, &fenceCreateInfo, nullptr, &m_immRenderData.immFence));
+	m_mainDeletionQueue.push_function([this]()
+	{
+		vkDestroyFence(m_device, m_immRenderData.immFence, nullptr);
+	});
 }
 
 void Magma::Renderer::init_descriptors()
 {
 	m_descriptorManager.Init(m_device);
+
+	// Create a sampler for the draw image (for ImGui texture display)
+	VkSamplerCreateInfo samplerInfo = {};
+	samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+	samplerInfo.magFilter = VK_FILTER_LINEAR;
+	samplerInfo.minFilter = VK_FILTER_LINEAR;
+	samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	samplerInfo.anisotropyEnable = VK_FALSE;
+	samplerInfo.maxAnisotropy = 1.0f;
+	samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+	samplerInfo.unnormalizedCoordinates = VK_FALSE;
+	samplerInfo.compareEnable = VK_FALSE;
+	samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+	samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+	samplerInfo.mipLodBias = 0.0f;
+	samplerInfo.minLod = 0.0f;
+	samplerInfo.maxLod = 0.0f;
+
+	VK_CHECK(vkCreateSampler(m_device, &samplerInfo, nullptr, &m_drawImageSampler));
+
+	m_mainDeletionQueue.push_function([this]() {
+		vkDestroySampler(m_device, m_drawImageSampler, nullptr);
+	});
 
 	Vector<DescriptorLayoutBinding> drawImageBindings = {
 		{
@@ -364,6 +407,7 @@ void Magma::Renderer::create_swapchain(Maths::Vec2<uint32_t> size)
 	drawImageUsages |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 	drawImageUsages |= VK_IMAGE_USAGE_STORAGE_BIT;
 	drawImageUsages |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+	drawImageUsages |= VK_IMAGE_USAGE_SAMPLED_BIT;  // Required for ImGui texture sampling
 
 	VkImageCreateInfo rimg_info = vkinit::image_create_info(m_drawImage.imageFormat, drawImageUsages, drawImageExtent);
 
@@ -381,7 +425,7 @@ void Magma::Renderer::create_swapchain(Maths::Vec2<uint32_t> size)
 	VK_CHECK(vkCreateImageView(m_device, &rview_info, nullptr, &m_drawImage.imageView));
 
 	//add to deletion queues
-	m_mainDeletionQueue.push_function([=]() {
+	m_mainDeletionQueue.push_function([this]() {
 		vkDestroyImageView(m_device, m_drawImage.imageView, nullptr);
 		vmaDestroyImage(m_allocator, m_drawImage.image, m_drawImage.allocation);
 	});
@@ -440,7 +484,7 @@ void Magma::Renderer::init_pipelines()
 		std::exit(EXIT_FAILURE);
 	}
 
-	m_mainDeletionQueue.push_function([=]() {
+	m_mainDeletionQueue.push_function([this]() {
 		m_gradientPipeline.Destroy();
 	});
 
@@ -510,4 +554,148 @@ void Magma::Renderer::draw_geometry(VkCommandBuffer cmd)
 	vkCmdDraw(cmd, 3, 1, 0, 0);
 
 	m_vkCmdEndRenderingKHR(cmd);
+}
+
+void Magma::Renderer::immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function)
+{
+	VK_CHECK(vkResetFences(m_device, 1, &m_immRenderData.immFence));
+	VK_CHECK(vkResetCommandBuffer(m_immRenderData.immCommandBuffer, 0));
+
+	VkCommandBuffer cmd = m_immRenderData.immCommandBuffer;
+
+	VkCommandBufferBeginInfo cmdBeginInfo = vkinit::command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+
+	VK_CHECK(vkBeginCommandBuffer(cmd, &cmdBeginInfo));
+
+	function(cmd);
+
+	VK_CHECK(vkEndCommandBuffer(cmd));
+
+	VkCommandBufferSubmitInfo cmdinfo = vkinit::command_buffer_submit_info(cmd);
+	VkSubmitInfo2 submit = vkinit::submit_info(&cmdinfo, nullptr, nullptr);
+
+	// submit command buffer to the queue and execute it.
+	//  _renderFence will now block until the graphic commands finish execution
+	VK_CHECK(vkQueueSubmit2(m_graphicsQueue, 1, &submit, m_immRenderData.immFence));
+
+	VK_CHECK(vkWaitForFences(m_device, 1, &m_immRenderData.immFence, true, 9999999999));
+}
+
+void Magma::Renderer::BeginFrame()
+{
+	VK_CHECK(vkWaitForFences(m_device, 1, &get_current_frame().m_renderFence, true, 1000000000));
+	VK_CHECK(vkResetFences(m_device, 1, &get_current_frame().m_renderFence));
+
+	get_current_frame().m_deletionQueue.flush();
+
+	VK_CHECK(vkAcquireNextImageKHR(m_device, m_swapchain, 1000000000, get_current_frame().m_swapchainSemaphore, nullptr, &m_currentSwapchainImageIndex));
+
+	VkCommandBuffer cmd = get_current_frame().m_mainCommandBuffer;
+	VK_CHECK(vkResetCommandBuffer(cmd, 0));
+
+	VkCommandBufferBeginInfo cmdBeginInfo = vkinit::command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+	VK_CHECK(vkBeginCommandBuffer(cmd, &cmdBeginInfo));
+}
+
+void Magma::Renderer::RenderScene()
+{
+	VkCommandBuffer cmd = get_current_frame().m_mainCommandBuffer;
+
+	m_drawExtent.width = m_drawImage.imageExtent.width;
+	m_drawExtent.height = m_drawImage.imageExtent.height;
+
+	vkutil::transition_image(cmd, m_drawImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+
+	draw_background(cmd);
+	// draw_geometry(cmd);
+
+	// Transition draw image to shader read for ImGui viewport
+	vkutil::transition_image(cmd, m_drawImage.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+}
+
+void Magma::Renderer::CopyToSwapchain()
+{
+	VkCommandBuffer cmd = get_current_frame().m_mainCommandBuffer;
+
+	// Transition draw image for transfer
+	vkutil::transition_image(cmd, m_drawImage.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+	vkutil::transition_image(cmd, m_swapchainImages[m_currentSwapchainImageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+	vkutil::copy_image_to_image(cmd, m_drawImage.image, m_swapchainImages[m_currentSwapchainImageIndex], m_drawExtent, m_swapchainExtent, m_vkCmdBlitImage2);
+
+	// Transition draw image back to shader read for ImGui to sample it
+	vkutil::transition_image(cmd, m_drawImage.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+	// Transition to color attachment for ImGui rendering
+	vkutil::transition_image(cmd, m_swapchainImages[m_currentSwapchainImageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+}
+
+void Magma::Renderer::BeginUIRenderPass()
+{
+	VkCommandBuffer cmd = get_current_frame().m_mainCommandBuffer;
+	// Begin rendering to swapchain image for UI
+	VkRenderingAttachmentInfo colorAttachment = vkinit::attachment_info(
+		m_swapchainImageViews[m_currentSwapchainImageIndex],
+		nullptr,
+		VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+	);
+	colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;  // Load existing content
+	VkRenderingInfo renderInfo = vkinit::rendering_info(m_swapchainExtent, &colorAttachment, nullptr);
+
+	if (m_vkCmdBeginRenderingKHR)
+	{
+		m_vkCmdBeginRenderingKHR(cmd, &renderInfo);
+	}
+}
+
+void Magma::Renderer::EndFrame()
+{
+	VkCommandBuffer cmd = get_current_frame().m_mainCommandBuffer;
+	if (m_vkCmdEndRenderingKHR)
+	{
+		m_vkCmdEndRenderingKHR(cmd);
+	}
+
+	// Transition to present
+	vkutil::transition_image(cmd, m_swapchainImages[m_currentSwapchainImageIndex], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+
+	VK_CHECK(vkEndCommandBuffer(cmd));
+}
+
+void Magma::Renderer::Present()
+{
+	VkCommandBuffer cmd = get_current_frame().m_mainCommandBuffer;
+	// Submit
+	VkSubmitInfo submit = {};
+	submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+	submit.pNext = nullptr;
+
+	submit.waitSemaphoreCount = 1;
+	submit.pWaitSemaphores = &get_current_frame().m_swapchainSemaphore;
+	VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+	submit.pWaitDstStageMask = &waitStage;
+
+	submit.signalSemaphoreCount = 1;
+	submit.pSignalSemaphores = &get_current_frame().m_renderSemaphore;
+
+	submit.commandBufferCount = 1;
+	submit.pCommandBuffers = &cmd;
+
+	VK_CHECK(vkQueueSubmit(m_graphicsQueue, 1, &submit, get_current_frame().m_renderFence));
+
+	// Present
+	VkPresentInfoKHR presentInfo = {};
+	presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+	presentInfo.pNext = nullptr;
+	presentInfo.pSwapchains = &m_swapchain;
+	presentInfo.swapchainCount = 1;
+
+	presentInfo.pWaitSemaphores = &get_current_frame().m_renderSemaphore;
+	presentInfo.waitSemaphoreCount = 1;
+
+	presentInfo.pImageIndices = &m_currentSwapchainImageIndex;
+
+	VK_CHECK(vkQueuePresentKHR(m_graphicsQueue, &presentInfo));
+
+	m_frameNumber++;
 }

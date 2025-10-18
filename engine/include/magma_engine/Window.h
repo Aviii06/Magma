@@ -33,6 +33,7 @@ namespace Magma
 		bool ShouldClose() const { return glfwWindowShouldClose(m_window.get()); }
 		void GetDrawSurface(Map<SurfaceArgs, int*> surfaceArgs);
 		Maths::Vec2<uint32_t> GetExtent() { return {m_windowData.m_width, m_windowData.m_height}; }
+		GLFWwindow* GetGLFWWindow() const { return m_window.get(); }
 		const char** GetRequiredExtensions(uint32_t* count) const
 		{
 			*count = m_extensionCount;

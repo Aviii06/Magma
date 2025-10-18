@@ -10,3 +10,6 @@
 [submodule "vendor/vma"]
 	path = vendor/vma
 	url = https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
+[submodule "vendor/imgui"]
+	path = vendor/imgui
+	url = https://github.com/Aviii06/imgui.git
