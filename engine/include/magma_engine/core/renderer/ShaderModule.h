@@ -9,7 +9,7 @@ namespace Magma
     {
     public:
         ShaderModule() = default;
-        ~ShaderModule();
+        ~ShaderModule() = default;
 
         // Delete copy operations
         ShaderModule(const ShaderModule&) = delete;

@@ -9,6 +9,7 @@
 #include <magma_engine/core/renderer/VkInitializers.h>
 #include <magma_engine/core/renderer/VkUtils.h>
 #include <magma_engine/core/renderer/Renderer.h>
+#include <magma_engine/core/renderer/StageFactory.h>
 
 constexpr bool b_UseValidationLayers = true;
 
@@ -22,19 +23,12 @@ void Magma::Renderer::Init()
 	init_commands();
 	init_sync_structures();
 	init_descriptors();
-	init_pipelines();
+	init_render_stages();
 }
 
 void Magma::Renderer::Cleanup()
 {
 	vkDeviceWaitIdle(m_device);
-
-	// TODO: Add these to the main deletion queue.
-	m_trianglePipeline.Destroy();
-	m_gradientPipeline.Destroy();
-	m_triangleVertShader.Destroy();
-	m_triangleFragShader.Destroy();
-	m_gradientCompShader.Destroy();
 
 	// Cleanup sync structures and per-frame resources
 	for (int i = 0; i < FRAME_OVERLAP; i++)
@@ -55,76 +49,6 @@ void Magma::Renderer::Cleanup()
 	vkDestroyDevice(m_device, nullptr);
 	vkb::destroy_debug_utils_messenger(m_instance, m_debugMessenger);
 	vkDestroyInstance(m_instance, nullptr);
-}
-
-void Magma::Renderer::Draw()
-{
-	VK_CHECK(vkWaitForFences(m_device, 1, &get_current_frame().m_renderFence, true, 1000000000));
-	VK_CHECK(vkResetFences(m_device, 1, &get_current_frame().m_renderFence));
-
-	get_current_frame().m_deletionQueue.flush();
-
-	uint32_t swapchainImageIndex;
-	VK_CHECK(vkAcquireNextImageKHR(m_device, m_swapchain, 1000000000, get_current_frame().m_swapchainSemaphore, nullptr, &swapchainImageIndex));
-
-	VkCommandBuffer cmd = get_current_frame().m_mainCommandBuffer;
-
-	VK_CHECK(vkResetCommandBuffer(cmd, 0));
-
-	VkCommandBufferBeginInfo cmdBeginInfo = vkinit::command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
-
-	m_drawExtent.width = m_drawImage.imageExtent.width;
-	m_drawExtent.height = m_drawImage.imageExtent.height;
-
-	VK_CHECK(vkBeginCommandBuffer(cmd, &cmdBeginInfo));
-
-	vkutil::transition_image(cmd, m_drawImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
-
-	draw_background(cmd);
-	// draw_geometry(cmd);
-
-	vkutil::transition_image(cmd, m_drawImage.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-	vkutil::transition_image(cmd, m_swapchainImages[swapchainImageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-
-	vkutil::copy_image_to_image(cmd, m_drawImage.image, m_swapchainImages[swapchainImageIndex], m_drawExtent, m_swapchainExtent, m_vkCmdBlitImage2);
-
-	vkutil::transition_image(cmd, m_swapchainImages[swapchainImageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
-
-	VK_CHECK(vkEndCommandBuffer(cmd));
-
-	// Use Vulkan 1.0 submit instead of VkSubmitInfo2
-	VkSubmitInfo submit = {};
-	submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-	submit.pNext = nullptr;
-
-	submit.waitSemaphoreCount = 1;
-	submit.pWaitSemaphores = &get_current_frame().m_swapchainSemaphore;
-	VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-	submit.pWaitDstStageMask = &waitStage;
-
-	submit.signalSemaphoreCount = 1;
-	submit.pSignalSemaphores = &get_current_frame().m_renderSemaphore;
-
-	submit.commandBufferCount = 1;
-	submit.pCommandBuffers = &cmd;
-
-	VK_CHECK(vkQueueSubmit(m_graphicsQueue, 1, &submit, get_current_frame().m_renderFence));
-
-	VkPresentInfoKHR presentInfo = {};
-	presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-	presentInfo.pNext = nullptr;
-	presentInfo.pSwapchains = &m_swapchain;
-	presentInfo.swapchainCount = 1;
-
-	presentInfo.pWaitSemaphores = &get_current_frame().m_renderSemaphore;
-	presentInfo.waitSemaphoreCount = 1;
-
-	presentInfo.pImageIndices = &swapchainImageIndex;
-
-	VK_CHECK(vkQueuePresentKHR(m_graphicsQueue, &presentInfo));
-
-	//increase the number of frames drawn
-	m_frameNumber++;
 }
 
 void Magma::Renderer::init_vulkan()
@@ -319,8 +243,6 @@ void Magma::Renderer::init_sync_structures()
 
 void Magma::Renderer::init_descriptors()
 {
-	m_descriptorManager.Init(m_device);
-
 	// Create a sampler for the draw image (for ImGui texture display)
 	VkSamplerCreateInfo samplerInfo = {};
 	samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -346,31 +268,50 @@ void Magma::Renderer::init_descriptors()
 		vkDestroySampler(m_device, m_drawImageSampler, nullptr);
 	});
 
-	Vector<DescriptorLayoutBinding> drawImageBindings = {
-		{
-			.binding = 0,
-			.type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT
-		}
-	};
+	Logger::Log(LogLevel::INFO, "Descriptor manager initialized successfully");
+}
 
-	m_drawImageDescriptorLayout = m_descriptorManager.CreateLayout(drawImageBindings);
-	m_drawImageDescriptors = m_descriptorManager.AllocateDescriptorSet(m_drawImageDescriptorLayout);
+void Magma::Renderer::init_render_stages()
+{
+	Logger::Log(LogLevel::INFO, "Initializing render stages");
 
-	// Write the draw image to the descriptor set
-	m_descriptorManager.WriteImageDescriptor(
-		m_drawImageDescriptors,
-		0,  // binding
-		m_drawImage.imageView,
-		VK_IMAGE_LAYOUT_GENERAL,
-		VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
+	// Create and initialize resource allocator
+	m_resourceAllocator = std::make_shared<RenderResourceAllocator>();
+	m_resourceAllocator->Initialize(m_device, m_allocator);
+
+	// Add render stages to orchestrator
+	m_renderOrchestrator.AddStage(StageFactory::CreateComputeStage(
+		"BackgroundStage",
+		"assets/shaders/Gradient.comp.spv",
+		"drawImage",
+		16,
+		16
+	));
+
+	// Initialize orchestrator (will allocate buffers and initialize all stages)
+	m_renderOrchestrator.Initialize(
+		m_resourceAllocator,
+		m_swapchainExtent
 	);
 
-	m_mainDeletionQueue.push_function([this]() {
-		m_descriptorManager.Cleanup();
+	// Update draw extent from the allocated draw image
+	auto drawImage = m_renderOrchestrator.GetBuffer("drawImage");
+	if (drawImage)
+	{
+		m_drawExtent.width = drawImage->imageExtent.width;
+		m_drawExtent.height = drawImage->imageExtent.height;
+	}
+
+	m_mainDeletionQueue.push_function([this]()
+	{
+		m_renderOrchestrator.Cleanup();
+		if (m_resourceAllocator)
+		{
+			m_resourceAllocator->Cleanup();
+		}
 	});
 
-	Logger::Log(LogLevel::INFO, "Draw image descriptors initialized successfully");
+	Logger::Log(LogLevel::INFO, "Render stages initialized successfully");
 }
 
 void Magma::Renderer::create_swapchain(Maths::Vec2<uint32_t> size)
@@ -391,44 +332,6 @@ void Magma::Renderer::create_swapchain(Maths::Vec2<uint32_t> size)
 	m_swapchain = vkbSwapchain.swapchain;
 	m_swapchainImages = vkbSwapchain.get_images().value();
 	m_swapchainImageViews = vkbSwapchain.get_image_views().value();
-
-	VkExtent3D drawImageExtent = {
-		size.x,
-		size.y,
-		1
-	};
-
-	//hardcoding the draw format to 32 bit float
-	m_drawImage.imageFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
-	m_drawImage.imageExtent = drawImageExtent;
-
-	VkImageUsageFlags drawImageUsages{};
-	drawImageUsages |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-	drawImageUsages |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-	drawImageUsages |= VK_IMAGE_USAGE_STORAGE_BIT;
-	drawImageUsages |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-	drawImageUsages |= VK_IMAGE_USAGE_SAMPLED_BIT;  // Required for ImGui texture sampling
-
-	VkImageCreateInfo rimg_info = vkinit::image_create_info(m_drawImage.imageFormat, drawImageUsages, drawImageExtent);
-
-	//for the draw image, we want to allocate it from gpu local memory
-	VmaAllocationCreateInfo rimg_allocinfo = {};
-	rimg_allocinfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
-	rimg_allocinfo.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-	//allocate and create the image
-	vmaCreateImage(m_allocator, &rimg_info, &rimg_allocinfo, &m_drawImage.image, &m_drawImage.allocation, nullptr);
-
-	//build a image-view for the draw image to use for rendering
-	VkImageViewCreateInfo rview_info = vkinit::imageview_create_info(m_drawImage.imageFormat, m_drawImage.image, VK_IMAGE_ASPECT_COLOR_BIT);
-
-	VK_CHECK(vkCreateImageView(m_device, &rview_info, nullptr, &m_drawImage.imageView));
-
-	//add to deletion queues
-	m_mainDeletionQueue.push_function([this]() {
-		vkDestroyImageView(m_device, m_drawImage.imageView, nullptr);
-		vmaDestroyImage(m_allocator, m_drawImage.image, m_drawImage.allocation);
-	});
 }
 
 void Magma::Renderer::destroy_swapchain()
@@ -439,121 +342,6 @@ void Magma::Renderer::destroy_swapchain()
 	{
 		vkDestroyImageView(m_device, m_swapchainImageViews[i], nullptr);
 	}
-}
-
-void Magma::Renderer::init_pipelines()
-{
-	if (!m_triangleVertShader.LoadFromFile(m_device, "assets/shaders/colored_triangle.vert.spv"))
-	{
-		Logger::Log(LogLevel::ERROR, "Failed to load triangle vertex shader");
-		std::exit(EXIT_FAILURE);
-	}
-
-	if (!m_triangleFragShader.LoadFromFile(m_device, "assets/shaders/colored_triangle.frag.spv"))
-	{
-		Logger::Log(LogLevel::ERROR, "Failed to load triangle fragment shader");
-		std::exit(EXIT_FAILURE);
-	}
-
-	if (!m_gradientCompShader.LoadFromFile(m_device, "assets/shaders/Gradient.comp.spv"))
-	{
-		Logger::Log(LogLevel::ERROR, "Failed to load triangle compute shader");
-		std::exit(EXIT_FAILURE);
-	}
-
-	PipelineLayoutInfo layoutInfo{};
-	layoutInfo.descriptorSetLayouts.push_back(m_drawImageDescriptorLayout);
-
-	if (!m_trianglePipeline.Create(
-		m_device,
-		layoutInfo,
-		m_triangleVertShader.GetModule(),
-		m_triangleFragShader.GetModule(),
-		m_swapchainImageFormat))
-	{
-		Logger::Log(LogLevel::ERROR, "Failed to create triangle pipeline");
-		std::exit(EXIT_FAILURE);
-	}
-
-	if (!m_gradientPipeline.Create(
-		m_device,
-		layoutInfo,
-		m_gradientCompShader.GetModule()))
-	{
-		Logger::Log(LogLevel::ERROR, "Failed to create triangle compute pipeline");
-		std::exit(EXIT_FAILURE);
-	}
-
-	m_mainDeletionQueue.push_function([this]() {
-		m_gradientPipeline.Destroy();
-	});
-
-	Logger::Log(LogLevel::INFO, "Pipelines initialized successfully");
-}
-
-void Magma::Renderer::init_background_pipelines()
-{
-}
-
-void Magma::Renderer::draw_background(VkCommandBuffer cmd)
-{
-	//make a clear-color from frame number. This will flash with a 120 frame period.
-	VkClearColorValue clearValue;
-	float flash = std::abs(std::sin(m_frameNumber / 120.f));
-	clearValue = { { 0.0f, 0.0f, flash, 1.0f } };
-
-	VkImageSubresourceRange clearRange = vkinit::image_subresource_range(VK_IMAGE_ASPECT_COLOR_BIT);
-
-	//clear image
-	// vkCmdClearColorImage(cmd, m_drawImage.image, VK_IMAGE_LAYOUT_GENERAL, &clearValue, 1, &clearRange);
-
-	m_gradientPipeline.Bind(cmd);
-
-	std::vector<VkDescriptorSet> sets;
-	sets.push_back(m_drawImageDescriptors);
-	m_descriptorManager.BindDescriptor(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_gradientPipeline, sets);
-	m_gradientPipeline.Dispatch(cmd, std::ceil(m_drawExtent.width / 16.0), std::ceil(m_drawExtent.height / 16.0), 1);
-}
-
-void Magma::Renderer::draw_geometry(VkCommandBuffer cmd)
-{
-	VkRenderingAttachmentInfo colorAttachment = vkinit::attachment_info(
-		m_drawImage.imageView,
-		nullptr,
-		VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
-	);
-
-	VkRenderingInfo renderInfo = vkinit::rendering_info(m_swapchainExtent, &colorAttachment, nullptr);
-
-	// Use manually loaded function pointer through the vulkan extensions.
-	if (m_vkCmdBeginRenderingKHR)
-	{
-		m_vkCmdBeginRenderingKHR(cmd, &renderInfo);
-	}
-	else
-	{
-		Logger::Log(LogLevel::ERROR, "Dynamic rendering not available!");
-		return;
-	}
-
-	VkViewport viewport{};
-	viewport.x = 0.0f;
-	viewport.y = 0.0f;
-	viewport.width = static_cast<float>(m_swapchainExtent.width);
-	viewport.height = static_cast<float>(m_swapchainExtent.height);
-	viewport.minDepth = 0.0f;
-	viewport.maxDepth = 1.0f;
-	vkCmdSetViewport(cmd, 0, 1, &viewport);
-
-	VkRect2D scissor{};
-	scissor.offset = {0, 0};
-	scissor.extent = m_swapchainExtent;
-	vkCmdSetScissor(cmd, 0, 1, &scissor);
-
-	m_trianglePipeline.Bind(cmd);
-	vkCmdDraw(cmd, 3, 1, 0, 0);
-
-	m_vkCmdEndRenderingKHR(cmd);
 }
 
 void Magma::Renderer::immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function)
@@ -601,30 +389,48 @@ void Magma::Renderer::RenderScene()
 {
 	VkCommandBuffer cmd = get_current_frame().m_mainCommandBuffer;
 
-	m_drawExtent.width = m_drawImage.imageExtent.width;
-	m_drawExtent.height = m_drawImage.imageExtent.height;
+	std::shared_ptr<AllocatedImage> drawImage = m_renderOrchestrator.GetBuffer("drawImage");
+	if (drawImage)
+	{
+		m_drawExtent.width = drawImage->imageExtent.width;
+		m_drawExtent.height = drawImage->imageExtent.height;
 
-	vkutil::transition_image(cmd, m_drawImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+		// Transition to GENERAL for compute shader
+		vkutil::transition_image(cmd, drawImage->image, drawImage->currentLayout, VK_IMAGE_LAYOUT_GENERAL);
+		drawImage->currentLayout = VK_IMAGE_LAYOUT_GENERAL;
+	}
 
-	draw_background(cmd);
-	// draw_geometry(cmd);
+	// Execute render stages through orchestrator
+	m_renderOrchestrator.Execute(cmd);
 
 	// Transition draw image to shader read for ImGui viewport
-	vkutil::transition_image(cmd, m_drawImage.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	if (drawImage)
+	{
+		vkutil::transition_image(cmd, drawImage->image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+		drawImage->currentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+	}
 }
 
 void Magma::Renderer::CopyToSwapchain()
 {
 	VkCommandBuffer cmd = get_current_frame().m_mainCommandBuffer;
 
+	auto drawImage = m_renderOrchestrator.GetBuffer("drawImage");
+	if (!drawImage)
+	{
+		return;
+	}
+
 	// Transition draw image for transfer
-	vkutil::transition_image(cmd, m_drawImage.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+	vkutil::transition_image(cmd, drawImage->image, drawImage->currentLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+	drawImage->currentLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
 	vkutil::transition_image(cmd, m_swapchainImages[m_currentSwapchainImageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
-	vkutil::copy_image_to_image(cmd, m_drawImage.image, m_swapchainImages[m_currentSwapchainImageIndex], m_drawExtent, m_swapchainExtent, m_vkCmdBlitImage2);
+	vkutil::copy_image_to_image(cmd, drawImage->image, m_swapchainImages[m_currentSwapchainImageIndex], m_drawExtent, m_swapchainExtent, m_vkCmdBlitImage2);
 
 	// Transition draw image back to shader read for ImGui to sample it
-	vkutil::transition_image(cmd, m_drawImage.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	vkutil::transition_image(cmd, drawImage->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	drawImage->currentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
 	// Transition to color attachment for ImGui rendering
 	vkutil::transition_image(cmd, m_swapchainImages[m_currentSwapchainImageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);

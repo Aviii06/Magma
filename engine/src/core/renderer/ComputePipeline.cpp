@@ -1,5 +1,5 @@
 #include <magma_engine/core/renderer/ComputePipeline.h>
-#include <logging/Logging.h>
+#include <logging/Logger.h>
 
 namespace Magma
 {

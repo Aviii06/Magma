@@ -13,6 +13,12 @@ set(SOURCES
         src/core/renderer/ComputePipeline.cpp
         src/core/renderer/ShaderModule.cpp
         src/core/renderer/DescriptorManager.cpp
+        src/core/renderer/BufferRegistry.cpp
+        src/core/renderer/RenderResourceAllocator.cpp
+        src/core/renderer/RenderOrchestrator.cpp
+        src/core/renderer/RenderStage.cpp
+        src/core/renderer/RenderGraph.cpp
+        src/core/renderer/StageFactory.cpp
 )
 
 add_library(${PROJECT_NAME} ${SOURCES})
@@ -31,7 +37,7 @@ target_link_libraries(${PROJECT_NAME}
         vendor
 )
 
-file (GLOB SHADERS assets/shaders/*.frag assets/shaders/*.vert)
+file (GLOB SHADERS assets/shaders/*.frag assets/shaders/*.vert assets/shaders/*.comp)
 
 add_custom_command(TARGET ${PROJECT_NAME} PRE_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/editor/assets

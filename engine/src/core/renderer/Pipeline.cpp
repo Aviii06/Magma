@@ -1,13 +1,8 @@
 #include <magma_engine/core/renderer/Pipeline.h>
-#include <logging/Logging.h>
+#include <logging/Logger.h>
 
 namespace Magma
 {
-    Pipeline::~Pipeline()
-    {
-        Destroy();
-    }
-
     Pipeline::Pipeline(Pipeline&& other) noexcept
         : m_device(other.m_device)
         , m_pipeline(other.m_pipeline)

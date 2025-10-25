@@ -2,15 +2,12 @@
 #include <types/Containers.h>
 #include <maths/Vec.h>
 
-
 #include <magma_engine/ServiceLocater.h>
 #include <magma_engine/core/renderer/Image.h>
 #include <magma_engine/core/renderer/DeletionQueue.h>
-#include <magma_engine/core/renderer/GraphicsPipeline.h>
 #include <magma_engine/core/renderer/ShaderModule.h>
-#include <magma_engine/core/renderer/DescriptorManager.h>
-
-#include "ComputePipeline.h"
+#include <magma_engine/core/renderer/RenderResourceAllocator.h>
+#include <magma_engine/core/renderer/RenderOrchestrator.h>
 
 const int FRAME_OVERLAP = 3;
 
@@ -36,13 +33,11 @@ namespace Magma
     {
     public:
         void Init();
-        void Draw();
         void Cleanup() override;
         FrameData& get_current_frame() { return m_frames[m_frameNumber % FRAME_OVERLAP]; };
 
         void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
 
-        // New methods for editor integration
         void BeginFrame();
         void RenderScene();
         void CopyToSwapchain();
@@ -59,7 +54,7 @@ namespace Magma
         VkQueue GetGraphicsQueue() const { return m_graphicsQueue; }
         uint32_t GetGraphicsQueueFamily() const { return m_graphicsQueueFamily; }
         VkFormat GetSwapchainImageFormat() const { return m_swapchainImageFormat; }
-        AllocatedImage& GetDrawImage() { return m_drawImage; }
+        std::shared_ptr<AllocatedImage> GetDrawImage() { return m_renderOrchestrator.GetBuffer("drawImage"); }
         VkExtent2D GetDrawExtent() const { return m_drawExtent; }
         VkSampler GetDrawImageSampler() const { return m_drawImageSampler; }
 
@@ -69,13 +64,7 @@ namespace Magma
         void init_commands();
         void init_sync_structures();
         void init_descriptors();
-        void init_pipelines();
-        void init_background_pipelines();
-
-        void init_imgui();
-
-        void draw_background(VkCommandBuffer cmd);
-        void draw_geometry(VkCommandBuffer cmd);
+        void init_render_stages();
 
         void create_swapchain(Maths::Vec2<uint32_t> size);
         void destroy_swapchain();
@@ -98,35 +87,23 @@ namespace Magma
         VkQueue m_graphicsQueue;
         uint32_t m_graphicsQueueFamily;
 
-        AllocatedImage m_drawImage;
         VkExtent2D m_drawExtent;
+
         VmaAllocator m_allocator;
 
         DeletionQueue m_mainDeletionQueue;
 
         ImmRenderData m_immRenderData;
 
-        // Pipeline and shader resources
-        DescriptorManager m_descriptorManager;
+        std::shared_ptr<RenderResourceAllocator> m_resourceAllocator;
+        RenderOrchestrator m_renderOrchestrator;
 
-        // TODO: Move these to seperate render stages, each render stage contain there own shaders and pipelines.
-        GraphicsPipeline m_trianglePipeline;
-        ComputePipeline m_gradientPipeline;
-        ShaderModule m_triangleVertShader;
-        ShaderModule m_triangleFragShader;
-        ShaderModule m_gradientCompShader;
-
-        // Draw image descriptors
-        VkDescriptorSet m_drawImageDescriptors;
-        VkDescriptorSetLayout m_drawImageDescriptorLayout;
         VkSampler m_drawImageSampler;
 
-        // Dynamic rendering function pointers (for MoltenVK compatibility)
         PFN_vkCmdBeginRenderingKHR m_vkCmdBeginRenderingKHR = nullptr;
         PFN_vkCmdEndRenderingKHR m_vkCmdEndRenderingKHR = nullptr;
         PFN_vkCmdBlitImage2KHR m_vkCmdBlitImage2 = nullptr;
 
-        // Current frame state
         uint32_t m_currentSwapchainImageIndex = 0;
     };
 }

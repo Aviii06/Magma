@@ -21,7 +21,6 @@ void Magma::Engine::Run()
 	while(!ServiceLocator::Get<Window>()->ShouldClose())
 	{
 		ServiceLocator::Get<Window>()->Update();
-		ServiceLocator::Get<Renderer>()->Draw();
 	}
 
 	// Gracefully Exit

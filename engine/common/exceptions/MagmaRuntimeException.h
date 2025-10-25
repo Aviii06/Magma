@@ -1,7 +1,7 @@
 #pragma once
 
 #include <types/Containers.h>
-#include <logging/Logging.h>
+#include <logging/Logger.h>
 
 namespace Magma
 {

@@ -12,17 +12,8 @@ namespace Magma
 
     class Pipeline
     {
-    protected:
-        VkDevice m_device = VK_NULL_HANDLE;
-        VkPipeline m_pipeline = VK_NULL_HANDLE;
-        VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
-
-        bool CreatePipelineLayout(const PipelineLayoutInfo& layoutInfo);
-
-        Pipeline() = default;
-
     public:
-        virtual ~Pipeline();
+        virtual ~Pipeline() = default;
 
         Pipeline(const Pipeline&) = delete;
         Pipeline& operator=(const Pipeline&) = delete;
@@ -37,6 +28,15 @@ namespace Magma
         virtual void Bind(VkCommandBuffer cmd) const = 0;
 
         virtual void Destroy();
+
+    protected:
+        VkDevice m_device = VK_NULL_HANDLE;
+        VkPipeline m_pipeline = VK_NULL_HANDLE;
+        VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
+
+        bool CreatePipelineLayout(const PipelineLayoutInfo& layoutInfo);
+
+        Pipeline() = default;
     };
 }
 

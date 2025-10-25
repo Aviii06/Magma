@@ -8,7 +8,6 @@ namespace Magma
     {
     public:
         ComputePipeline() = default;
-        ~ComputePipeline() override = default;
 
         bool Create(
             VkDevice device,

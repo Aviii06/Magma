@@ -7,7 +7,7 @@
 #include <magma_engine/Window.h>
 #include <magma_engine/core/renderer/Renderer.h>
 #include <magma_engine/core/renderer/VkInitializers.h>
-#include <logging/Logging.h>
+#include <logging/Logger.h>
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>

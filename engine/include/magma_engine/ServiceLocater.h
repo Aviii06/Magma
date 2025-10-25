@@ -7,7 +7,7 @@
 #include <typeindex>
 #include <type_traits>
 
-#include <logging/Logging.h>
+#include <logging/Logger.h>
 
 namespace Magma
 {

@@ -4,11 +4,6 @@
 
 namespace Magma
 {
-    ShaderModule::~ShaderModule()
-    {
-        Destroy();
-    }
-
     ShaderModule::ShaderModule(ShaderModule&& other) noexcept
         : m_device(other.m_device)
         , m_shaderModule(other.m_shaderModule)

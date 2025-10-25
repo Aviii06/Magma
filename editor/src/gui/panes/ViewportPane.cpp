@@ -15,11 +15,11 @@ namespace Magma
         if (m_textureInitialized) return;
 
         // Create ImGui texture from the draw image
-        auto& drawImage = m_renderer->GetDrawImage();
+        std::shared_ptr<AllocatedImage> drawImage = m_renderer->GetDrawImage();
 
         m_viewportTextureID = ImGui_ImplVulkan_AddTexture(
             m_renderer->GetDrawImageSampler(),  // Use the proper sampler
-            drawImage.imageView,
+            drawImage->imageView,
             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
         );
 

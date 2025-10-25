@@ -1,5 +1,5 @@
 #include <magma_engine/core/renderer/DescriptorManager.h>
-#include <logging/Logging.h>
+#include <logging/Logger.h>
 
 namespace Magma
 {
